@@ -4,11 +4,13 @@ import axios from 'axios';
 import { API_URL } from '../../config';
 import MessageInput from './MessageInput';
 import Message from './Message';
+import ManageGroupModal from './ManageGroupModal';
 
-function ChatWindow({ chats, setChats, currentUser, socket }) {
+function ChatWindow({ chats, setChats, currentUser, socket, users }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showManageModal, setShowManageModal] = useState(false);
   const { chatId } = useParams();
   const messagesEndRef = useRef(null);
   
@@ -91,12 +93,23 @@ function ChatWindow({ chats, setChats, currentUser, socket }) {
         );
       }
     });
-    
+
+    socket.on('chat_updated', (updatedChat) => {
+      if (updatedChat._id === chatId) {
+        setChats(prevChats =>
+          prevChats.map(chat =>
+            chat._id === chatId ? updatedChat : chat
+          )
+        );
+      }
+    });
+
     return () => {
       socket.emit('leave', { chat_id: chatId });
       socket.off('new_message');
       socket.off('message_updated');
       socket.off('message_deleted');
+      socket.off('chat_updated');
     };
   }, [socket, chatId, setChats]);
 
@@ -144,6 +157,14 @@ function ChatWindow({ chats, setChats, currentUser, socket }) {
     <div className="chat-window">
       <div className="chat-header">
         <h3>{getChatName()}</h3>
+        {currentChat.is_group && currentChat.owner === currentUser._id && (
+          <button
+            className="manage-group-btn"
+            onClick={() => setShowManageModal(true)}
+          >
+            Manage Group
+          </button>
+        )}
       </div>
       
       <div className="messages-container">
@@ -170,6 +191,15 @@ function ChatWindow({ chats, setChats, currentUser, socket }) {
       </div>
       
       <MessageInput onSend={sendMessage} />
+            
+      {showManageModal && currentChat && currentUser &&(
+        <ManageGroupModal
+          chat={currentChat}
+          users={users || []} // Fallback to empty array
+          onClose={() => setShowManageModal(false)}
+          currentUser={currentUser}
+        />
+      )}
     </div>
   );
 }

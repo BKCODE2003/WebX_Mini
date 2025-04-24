@@ -6,6 +6,8 @@ import { API_URL } from '../../config';
 import Sidebar from './Sidebar';
 import ChatWindow from './ChatWindow';
 import { useAuth } from '../../contexts/AuthContext';
+import ErrorBoundary from './ErrorBoundary';
+
 
 function ChatLayout() {
   const [chats, setChats] = useState([]);
@@ -35,12 +37,23 @@ function ChatLayout() {
       );
     });
     
+    socket.on('chat_removed', (data) => {
+      setChats(prevChats => 
+        prevChats.filter(chat => chat._id !== data.chat_id)
+      );
+      if (window.location.pathname.includes(data.chat_id)) {
+        navigate('/chat');
+      }
+    });
+    
+
     return () => {
       socket.off('user_added');
       socket.off('chat_created');
       socket.off('chat_updated');
+      socket.off('chat_removed');
     };
-  }, [socket]);
+  }, [socket, navigate]);
   
   // Initialize socket connection
   useEffect(() => {
@@ -70,8 +83,9 @@ function ChatLayout() {
         
         setChats(chatsResponse.data.chats);
         setUsers(usersResponse.data.users);
+        console.log('Users fetched in ChatLayout:', usersResponse.data.users);
       } catch (error) {
-        console.error('Error fetching data:', error);
+        console.error('Error fetching data:', error.response?.data || error.message);
         if (error.response?.status === 401) {
           logout();
           navigate('/login');
@@ -146,12 +160,15 @@ function ChatLayout() {
         <Route 
           path="/:chatId" 
           element={
-            <ChatWindow 
-              chats={chats}
-              setChats={setChats}
-              currentUser={currentUser}
-              socket={socket}
-            />
+            <ErrorBoundary>
+              <ChatWindow 
+                chats={chats}
+                setChats={setChats}
+                currentUser={currentUser}
+                socket={socket}
+                users={users}
+              />
+            </ErrorBoundary>
           } 
         />
       </Routes>
