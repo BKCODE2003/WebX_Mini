@@ -241,10 +241,17 @@ def create_chat():
             'name': data['name'],
             'is_group': True,
             'participants': participants,
+            'owner': ObjectId(current_user),  # Store the group owner,
             'created_at': datetime.datetime.utcnow(),
             'last_activity': datetime.datetime.utcnow()
         }).inserted_id
-    
+
+        # Emit chat_created event to all participants
+        chat = chats_collection.find_one({'_id': chat_id})
+        for participant_id in chat['participants']:
+            socketio.emit('chat_created', parse_json(chat), room=str(participant_id))
+
+
     else:
         return jsonify({"msg": "Invalid request data"}), 400
     
@@ -280,6 +287,109 @@ def get_chat(chat_id):
     chat['participant_details'] = participants
     
     return jsonify(parse_json(chat)), 200
+
+
+@app.route('/api/chats/<chat_id>/participants', methods=['POST'])
+@jwt_required()
+def add_participant(chat_id):
+    current_user = get_jwt_identity()
+    data = request.get_json()
+    user_id = data.get('user_id')
+    
+    if not user_id:
+        return jsonify({"msg": "User ID is required"}), 400
+    
+    chat = chats_collection.find_one({
+        '_id': ObjectId(chat_id),
+        'is_group': True,
+        'owner': ObjectId(current_user)
+    })
+    
+    if not chat:
+        return jsonify({"msg": "Chat not found or you are not the owner"}), 403
+    
+    if ObjectId(user_id) in chat['participants']:
+        return jsonify({"msg": "User is already in the group"}), 400
+    
+    updated = chats_collection.update_one(
+        {'_id': ObjectId(chat_id)},
+        {'$addToSet': {'participants': ObjectId(user_id)}}
+    )
+    
+    if updated.modified_count == 0:
+        return jsonify({"msg": "No changes made"}), 304
+    
+    # Send system message about new participant
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    message_id = messages_collection.insert_one({
+        'sender_id': None,  # System message
+        'chat_id': ObjectId(chat_id),
+        'content': f"{user['username']} was added to the group",
+        'timestamp': datetime.datetime.utcnow(),
+        'read': False,
+        'edited': False,
+        'is_system': True
+    }).inserted_id
+    
+    updated_chat = chats_collection.find_one({'_id': ObjectId(chat_id)})
+    message = messages_collection.find_one({'_id': message_id})
+    
+    # Emit events
+    socketio.emit('new_message', parse_json(message), room=chat_id)
+    socketio.emit('chat_updated', parse_json(updated_chat), room=chat_id)
+    socketio.emit('chat_created', parse_json(updated_chat), room=user_id)  # Notify new user
+    
+    return jsonify(parse_json(updated_chat)), 200
+
+@app.route('/api/chats/<chat_id>/participants/<user_id>', methods=['DELETE'])
+@jwt_required()
+def remove_participant(chat_id, user_id):
+    current_user = get_jwt_identity()
+    
+    chat = chats_collection.find_one({
+        '_id': ObjectId(chat_id),
+        'is_group': True,
+        'owner': ObjectId(current_user)
+    })
+    
+    if not chat:
+        return jsonify({"msg": "Chat not found or you are not the owner"}), 403
+    
+    if ObjectId(user_id) not in chat['participants']:
+        return jsonify({"msg": "User is not in the group"}), 400
+    
+    if str(user_id) == current_user:
+        return jsonify({"msg": "Owner cannot be removed"}), 403
+    
+    updated = chats_collection.update_one(
+        {'_id': ObjectId(chat_id)},
+        {'$pull': {'participants': ObjectId(user_id)}}
+    )
+    
+    if updated.modified_count == 0:
+        return jsonify({"msg": "No changes made"}), 304
+    
+    # Send system message about removed participant
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    message_id = messages_collection.insert_one({
+        'sender_id': None,  # System message
+        'chat_id': ObjectId(chat_id),
+        'content': f"{user['username']} was removed from the group",
+        'timestamp': datetime.datetime.utcnow(),
+        'read': False,
+        'edited': False,
+        'is_system': True
+    }).inserted_id
+    
+    updated_chat = chats_collection.find_one({'_id': ObjectId(chat_id)})
+    message = messages_collection.find_one({'_id': message_id})
+    
+    # Emit events
+    socketio.emit('new_message', parse_json(message), room=chat_id)
+    socketio.emit('chat_updated', parse_json(updated_chat), room=chat_id)
+    socketio.emit('chat_removed', {'chat_id': chat_id}, room=user_id)  # Notify removed user
+    
+    return jsonify({"msg": "User removed from group"}), 200
 
 # Message Routes
 @app.route('/api/chats/<chat_id>/messages', methods=['GET'])
