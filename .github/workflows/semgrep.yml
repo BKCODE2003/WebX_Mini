@@ -1,5 +1,5 @@
 name: Semgrep SAST
-on: [push, pull_request]
+on: [push, pull_request] 
 
 jobs:
   semgrep:
@@ -8,4 +8,5 @@ jobs:
       - uses: actions/checkout@v3
       - uses: returntocorp/semgrep-action@v1
         with:
+          version: "latest"
           config: "p/default" # or "p/owasp-top-ten"
